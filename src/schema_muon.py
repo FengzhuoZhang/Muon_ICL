@@ -35,6 +35,7 @@ curriculum_schema = {
 }
 
 TASK_LIST = [
+    "linear_regression_tail",
     "linear_regression",
     "sparse_linear_regression",
     "linear_classification",
@@ -43,6 +44,7 @@ TASK_LIST = [
 ]
 
 training_schema = {
+    "seed": merge(tinteger, default(42)),
     "optimizer": merge(tstring, allowed(["adam", "muon"])),
     "task": merge(tstring, allowed(TASK_LIST)),
     "task_kwargs": merge(tdict, required),
@@ -60,6 +62,11 @@ training_schema = {
     "curriculum": stdict(curriculum_schema),
 }
 
+tail_schema = {
+    "num_groups": merge(tinteger, default(3)),
+    "group_ratio": merge(tfloat, default(8)),
+}
+
 wandb_schema = {
     "project": merge(tstring, default("in-context-training")),
     "entity": merge(tstring, default("in-context")),
@@ -72,6 +79,8 @@ schema = {
     "out_dir": merge(tstring, required),
     "model": stdict(model_schema),
     "training": stdict(training_schema),
+    "tail": stdict(tail_schema),
     "wandb": stdict(wandb_schema),
     "test_run": merge(tboolean, default(False)),
+    "local_log": merge(tboolean, default(False)),
 }

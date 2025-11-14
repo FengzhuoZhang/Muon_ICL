@@ -1,4 +1,7 @@
 import os
+import sys
+with open(sys.argv[0]) as f:
+    code = f.read()
 from random import randint
 import uuid
 
@@ -8,7 +11,7 @@ import torch
 import yaml
 
 from eval import get_run_metrics
-from tasks import get_task_sampler
+from tasks_muon import get_task_sampler
 from samplers import get_data_sampler
 from curriculum import Curriculum
 from schema_muon import schema
@@ -101,6 +104,8 @@ def configure_muon(model, weight_decay, adam_lr, muon_lr, momentum=0.95, nestero
 
 
 def train(model, args):
+    evaluation_step = 100
+    eval_bsize = 1000
     if args.training.optimizer == "adam":
         optimizer = torch.optim.Adam(model.parameters(), lr=args.training.adam_lr, betas=(0.9, 0.95))
         optimizers = [optimizer]
@@ -122,6 +127,15 @@ def train(model, args):
         bsize,
         num_tasks=args.training.num_tasks,
         **args.training.task_kwargs,
+        **args.tail,
+    )
+    eval_task_sampler = get_task_sampler(
+        args.training.task,
+        n_dims,
+        eval_bsize,
+        num_tasks=args.training.num_tasks,
+        **args.training.task_kwargs,
+        **args.tail,
     )
     pbar = tqdm(range(starting_step, args.training.train_steps))
 
@@ -131,13 +145,13 @@ def train(model, args):
         data_sampler_args = {}
         task_sampler_args = {}
 
-        if "sparse" in args.training.task:
-            task_sampler_args["valid_coords"] = curriculum.n_dims_truncated
-        if num_training_examples is not None:
-            assert num_training_examples >= bsize
-            seeds = sample_seeds(num_training_examples, bsize)
-            data_sampler_args["seeds"] = seeds
-            task_sampler_args["seeds"] = [s + 1 for s in seeds]
+        # if "sparse" in args.training.task:
+        #     task_sampler_args["valid_coords"] = curriculum.n_dims_truncated
+        # if num_training_examples is not None:
+        #     assert num_training_examples >= bsize
+        #     seeds = sample_seeds(num_training_examples, bsize)
+        #     data_sampler_args["seeds"] = seeds
+        #     task_sampler_args["seeds"] = [s + 1 for s in seeds]
 
         xs = data_sampler.sample_xs(
             curriculum.n_points,
@@ -197,13 +211,35 @@ def train(model, args):
         ):
             torch.save(model.state_dict(), os.path.join(args.out_dir, f"model_{i}.pt"))
 
+        if i % evaluation_step == 0:
+            with torch.no_grad():
+                xs = data_sampler.sample_xs(
+                    curriculum.n_points,
+                    eval_bsize,
+                    curriculum.n_dims_truncated,
+                    **data_sampler_args,
+                )
+                task = eval_task_sampler(**task_sampler_args)
+                xs = xs.cuda()
+                ys = ys.cuda()
+                ys = task.eval_evaluate(eval_bsize, xs)
+                loss_func = task.get_metric()
+                output = model(xs, ys)
+                loss = loss_func(output, ys)
+                group_loss = task.process_loss(loss)
+                print(f"group_loss at step {i}: {group_loss}")
+            
+
 
 def main(args):
     if args.test_run:
         curriculum_args = args.training.curriculum
         curriculum_args.points.start = curriculum_args.points.end
         curriculum_args.dims.start = curriculum_args.dims.end
-        args.training.train_steps = 100
+        args.training.train_steps = 10000
+    # elif args.local_log:
+    #     #TODO: implement local log
+    #     file_name = ""
     else:
         wandb.init(
             dir=args.out_dir,
@@ -228,11 +264,11 @@ def main(args):
 
 
 if __name__ == "__main__":
+    setup_debugpy(force=True)
     parser = QuinineArgumentParser(schema=schema)
     args = parser.parse_quinfig()
     assert args.model.family in ["gpt2", "lstm"]
     print(f"Running with: {args}")
-    setup_debugpy(force=True)
 
     if not args.test_run:
         run_id = args.training.resume_id

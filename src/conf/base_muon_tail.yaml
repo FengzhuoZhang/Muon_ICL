@@ -3,15 +3,15 @@ inherit:
     - wandb.yaml
 
 model:
-    n_dims: 20
-    n_positions: 101
+    n_dims: 9
+    n_positions: 20
 
 training:
     optimizer: muon
-    task: linear_regression
+    task: linear_regression_tail
     data: gaussian
     task_kwargs: {}
-    batch_size: 64
+    batch_size: 150
     learning_rate: 0.0001
     muon_lr: 0.0001
     adam_lr: 0.0001
@@ -20,19 +20,26 @@ training:
     train_steps: 500001
     curriculum:
         dims:
-            start: 5
-            end: 20
+            start: 9
+            end: 9
             inc: 1
             interval: 2000
         points:
-            start: 101
-            end: 101
+            start: 20
+            end: 20
             inc: 1
             interval: 2000
+
+tail:
+    num_groups: 3
+    group_ratio: 8
 
 out_dir: ../models/linear_regression
 
 test_run: True
 
+local_log: True
+
 wandb:
     name: "linear_regression_toy"
+
