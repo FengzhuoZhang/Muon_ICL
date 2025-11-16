@@ -17,7 +17,7 @@ training:
     adam_lr: 0.0001
     save_every_steps: 1000
     keep_every_steps: 100000
-    train_steps: 500001
+    train_steps: 10000
     curriculum:
         dims:
             start: 9
@@ -34,9 +34,9 @@ tail:
     num_groups: 3
     group_ratio: 8
 
-out_dir: ../models/linear_regression
+out_dir: /home/aiops/zhangfz/Muon_linear_regression/Muon_ICL/logs/linear_regression_tail
 
-test_run: True
+test_run: False
 
 local_log: True
 

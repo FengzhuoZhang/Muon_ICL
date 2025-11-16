@@ -4,6 +4,7 @@ with open(sys.argv[0]) as f:
     code = f.read()
 from random import randint
 import uuid
+import argparse
 
 from quinine import QuinineArgumentParser
 from tqdm import tqdm
@@ -103,7 +104,7 @@ def configure_muon(model, weight_decay, adam_lr, muon_lr, momentum=0.95, nestero
     return [muon_optimizer, adam_optimizer]
 
 
-def train(model, args):
+def train(model, args, logfile):
     evaluation_step = 100
     eval_bsize = 1000
     if args.training.optimizer == "adam":
@@ -179,18 +180,22 @@ def train(model, args):
         )
 
         if i % args.wandb.log_every_steps == 0 and not args.test_run:
-            wandb.log(
-                {
-                    "overall_loss": loss,
-                    "excess_loss": loss / baseline_loss,
-                    "pointwise/loss": dict(
-                        zip(point_wise_tags, point_wise_loss.cpu().numpy())
-                    ),
-                    "n_points": curriculum.n_points,
-                    "n_dims": curriculum.n_dims_truncated,
-                },
-                step=i,
-            )
+            if args.local_log:
+                with open(logfile, "a") as f:
+                    f.write(f"train loss at step {i}: {loss}" + "\n")
+            else:
+                wandb.log(
+                    {
+                        "overall_loss": loss,
+                        "excess_loss": loss / baseline_loss,
+                        "pointwise/loss": dict(
+                            zip(point_wise_tags, point_wise_loss.cpu().numpy())
+                        ),
+                        "n_points": curriculum.n_points,
+                        "n_dims": curriculum.n_dims_truncated,
+                    },
+                    step=i,
+                )
 
         curriculum.update()
 
@@ -228,6 +233,9 @@ def train(model, args):
                 loss = loss_func(output, ys)
                 group_loss = task.process_loss(loss)
                 print(f"group_loss at step {i}: {group_loss}")
+                if args.local_log:
+                    with open(logfile, "a") as f:
+                        f.write(f"val loss at step {i}: {group_loss}" + "\n")
             
 
 
@@ -237,9 +245,11 @@ def main(args):
         curriculum_args.points.start = curriculum_args.points.end
         curriculum_args.dims.start = curriculum_args.dims.end
         args.training.train_steps = 10000
-    # elif args.local_log:
-    #     #TODO: implement local log
-    #     file_name = ""
+    elif args.local_log:
+        #TODO: implement local log
+        logfile = os.path.join(args.out_dir, "log.txt")
+        with open(logfile, "a") as f:
+            f.write(code + "\n")
     else:
         wandb.init(
             dir=args.out_dir,
@@ -251,31 +261,57 @@ def main(args):
             resume=True,
         )
 
+
+    seed = args.training.seed
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
     model = build_model(args.model)
     # for name, param in model.named_parameters():
     #     print(name, param.shape)
     model.cuda()
     model.train()
 
-    train(model, args)
+    train(model, args, logfile)
 
-    if not args.test_run:
-        _ = get_run_metrics(args.out_dir)  # precompute metrics for eval
+    # if not args.test_run:
+    #     _ = get_run_metrics(args.out_dir)  # precompute metrics for eval
 
 
 if __name__ == "__main__":
-    setup_debugpy(force=True)
+    # setup_debugpy(force=True)
+    # parser_add = argparse.ArgumentParser(description="NanoGPT Training Script with Muon")
+    # parser_add.add_argument("--muon_lr", type=float, default=0.0)
+    # parser_add.add_argument("--adam_lr", type=float, default=0.0)
+    # parser_add.add_argument("--out_dir", type=str, default="")
+    # args_add = parser_add.parse_args()
+
     parser = QuinineArgumentParser(schema=schema)
     args = parser.parse_quinfig()
     assert args.model.family in ["gpt2", "lstm"]
     print(f"Running with: {args}")
 
-    if not args.test_run:
-        run_id = args.training.resume_id
-        if run_id is None:
-            run_id = str(uuid.uuid4())
+    # if args_add.muon_lr != 0.0:
+    #     args.training.muon_lr = args_add.muon_lr
+    # if args_add.adam_lr != 0.0:
+    #     args.training.adam_lr = args_add.adam_lr
+    # if args_add.out_dir != "":
+    #     args.out_dir = args_add.out_dir
 
-        out_dir = os.path.join(args.out_dir, run_id)
+    if not args.test_run:
+        optimizer = args.training.optimizer
+        muon_lr = args.training.muon_lr
+        adam_lr = args.training.adam_lr
+        seed = args.training.seed
+        if optimizer == "adam":
+            exp_name = f"mode_adam_adam_lr_{adam_lr}_seed_{seed}"
+        elif optimizer == "muon":
+            exp_name = f"model_muon_muon_lr_{muon_lr}_seed_{seed}"
+        else:
+            raise ValueError(f"Invalid optimizer: {optimizer}")
+
+        out_dir = os.path.join(args.out_dir, exp_name)
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         args.out_dir = out_dir
